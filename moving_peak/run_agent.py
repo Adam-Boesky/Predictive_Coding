@@ -8,7 +8,7 @@ import jax.numpy as jnp
 sys.path.append('/n/home04/aboesky/ramanthan/Predictive_Coding')
 
 from copy import deepcopy
-from model import init_params, PCNLog, update_acts_energy, update_weights_energy, weight_clip, weight_noise, act_noise, energy, landscape, move
+from model import init_params, PCNLog, update_acts_energy, update_weights_energy, weight_clip, weight_noise, act_noise, energy, landscape, move, landscape_continuous, move_continuous
 
 
 def run_agent():
@@ -51,27 +51,39 @@ def run_agent():
 	all_coordinates = np.zeros((timesteps+1, 2)).astype(int)
 
 	# Get countours
-	with open('/n/ramanathan_lab/aboesky/reward_contours/contours_1000.pkl', 'rb') as f:
+	with open('/n/ramanathan_lab/aboesky/reward_contours/pyramids_100.pkl', 'rb') as f:
 		contours = pickle.load(f)
 
 	# Liftime loop
 	print('Running Liftetime!!!')
 	ctour_indx = 0
+
+	# Random start location
+	height, width = contours[0].shape[1], contours[0].shape[0]
+	all_coordinates[0][0] = np.random.randint(low=0, high=width-1)
+	all_coordinates[0][1] = np.random.randint(low=0, high=height-1)
 	for t in range(timesteps):
 		if t%10_000==0:
 			print(t)
 
 		# Every tenth timestep, advance the gaussian one step so the period is 10,000
-		if t%10==0: 
-			ctour_indx += 1
-			if ctour_indx == len(contours):  # If on last index, restart
+		# if t%1000==0:
+		# 	ctour_indx += 1
+		# 	if ctour_indx == len(contours):  # If on last index, restart
+		# 		ctour_indx = 0
+		# if t < timesteps / 2:
+		# 	ctour_indx = 50
+		if t % 10_000 == 0:
+			if ctour_indx == 0:
+				ctour_indx = 50
+			elif ctour_indx == 50:
 				ctour_indx = 0
 
 		log.record(activities, weights)
 
-		levers = landscape(contours[ctour_indx], all_coordinates[t])
+		levers = landscape_continuous(contours[ctour_indx], all_coordinates[t])
 
-		reward, all_coordinates[t+1], lever = move(all_coordinates[t], activities[-1], levers, contours[0].shape)
+		reward, all_coordinates[t+1], lever = move_continuous(all_coordinates[t], activities[-1], levers, contours[0].shape)
 		lever_history.append(lever)
 
 		activities = update_acts_energy(activities, weights, activity_history, hps)

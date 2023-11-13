@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-#SBATCH -p test
+#SBATCH -p shared
 #SBATCH -n 1
-#SBATCH --mem=184G
+#SBATCH --mem-per-cpu=5G
 #SBATCH -t 0-00:15 # time (D-HH:MM)
 #
 ##SBATCH --account=ramanathan_lab

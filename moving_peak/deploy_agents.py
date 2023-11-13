@@ -9,8 +9,8 @@ def deploy_agents():
     """Deploy the agents"""
 
     # Set up results dir
-    N_agents = 1000
-    results_path = '/n/ramanathan_lab/aboesky/moving_peak_results'
+    N_agents = 500
+    results_path = '/n/ramanathan_lab/aboesky/alternating_10000_pyramid_results'
     os.environ['RESULTS_DIR'] = results_path
     if os.path.exists(results_path) and os.path.isdir(results_path):
         shutil.rmtree(results_path)
