@@ -161,3 +161,6 @@ cython_debug/
 
 *.err
 *.out
+alternating_10000_pyramid_results
+*/data/*
+.DS_Store
