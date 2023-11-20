@@ -8,7 +8,10 @@ import jax.numpy as jnp
 sys.path.append('/n/home04/aboesky/ramanthan/Predictive_Coding')
 
 from copy import deepcopy
-from model import init_params, PCNLog, update_acts_energy, update_weights_energy, weight_clip, weight_noise, act_noise, energy, landscape, move, landscape_continuous, move_continuous
+from model import (init_params, PCNLog, update_acts_energy, update_weights_energy,
+                   weight_clip, weight_noise, act_noise, energy, landscape, move,
+                   landscape_continuous, move_continuous, get_environment_state, 
+                   get_environment_stimuli, bandit, get_reaction_times, update_act_history)
 
 
 def run_agent():
@@ -18,6 +21,7 @@ def run_agent():
 	agent_i = sys.argv[-1]
 
 	timesteps = 100_000
+	n_settle_steps = 20
 	sizes = [1, 30, 4]
 
 	initial_input = jnp.array([0.5])
@@ -29,7 +33,7 @@ def run_agent():
 		'gamma' : 0.01, # Activity update rate
 		'alpha' : 0.01, # Weight update rate
 
-		'noise_beta'  : 0.01,  # Activity history update rate for noise scale
+		'beta'  : 0.01,  # Activity history update rate for noise scale
 		'denom_constant' : 0.25, # Constant to add to denominator in energy term
 		'noise_scale' : 0.01, # Activity noise scale
 
@@ -79,21 +83,27 @@ def run_agent():
 			elif ctour_indx == 50:
 				ctour_indx = 0
 
-		log.record(activities, weights)
+		# Update activities
+		for _ in range(n_settle_steps):
+			activities = update_acts_energy(activities, weights, activity_history, hps)
+			activities, key = act_noise(activities, key, hps)
 
-		levers = landscape_continuous(contours[ctour_indx], all_coordinates[t])
-
-		reward, all_coordinates[t+1], lever = move_continuous(all_coordinates[t], activities[-1], levers, contours[0].shape)
-		lever_history.append(lever)
-
-		activities = update_acts_energy(activities, weights, activity_history, hps)
-		activities, activity_history, key = act_noise(activities, activity_history, key, hps)
-
+		# Update weights
 		weights = update_weights_energy(activities, weights, activity_history, hps)
 		weights, key = weight_noise(weights, key, hps)
 		weights = weight_clip(weights, cap=1.)
 
+		# Get agent move
+		levers = landscape_continuous(contours[ctour_indx], all_coordinates[t])
+		reward, all_coordinates[t+1], lever = move_continuous(all_coordinates[t], activities[-1], levers, contours[0].shape)
+		lever_history.append(lever)
+		
+		# Set activity history
 		activities[0] = jnp.array([reward])
+		activity_history = update_act_history(activities, activity_history, hps)
+
+		# Record states
+		log.record(activities, weights)
 		energies.append(energy(activities, weights, activity_history, hps))
 
 	# Save data

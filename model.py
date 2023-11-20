@@ -53,24 +53,54 @@ def ff(activities, weights):
 
 
 ### Energy function and training ##########################################################################
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!DEPRECATED!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# def energy(activities, weights, activity_history, hps):
+# 	'''Calculates overall prediction loss.
+# 	If beta==1 then noise is only based on the most recent activity.
+# 	'''
+
+# 	beta = hps['noise_beta']
+# 	C = hps['denom_constant']
+
+# 	# Update activity_history values
+# 	# (1-beta) * previous_activity_history + beta * new_activity
+# 	for l in range(len(activity_history)):
+# 		activity_history[l] = (1-beta) * activity_history[l] + beta * activities[l]
+
+# 	energy_sum = 0
+# 	for l in range(len(activities)-1):
+# 		energy_sum += jnp.sum((1/2) * ((activities[l+1] - jnp.matmul(weights[l], relu(activities[l]))) / (jnp.abs(activity_history[l+1]) + C)) ** 2)
+
+# 	return energy_sum
+
 def energy(activities, weights, activity_history, hps):
-	'''Calculates overall prediction loss.
-	If beta==1 then noise is only based on the most recent activity.
-	'''
+  '''Calculates overall prediction loss.
+  If beta==1 then noise is only based on the most recent activity.
 
-	beta = hps['noise_beta']
-	C = hps['denom_constant']
+  This energy is for an architecture where the first input neuron is an "environment" neuron and only connected to the first neuron in the next layer.
+  '''
+  C = hps['denom_constant']
 
-	# Update activity_history values
-	# (1-beta) * previous_activity_history + beta * new_activity
-	for l in range(len(activity_history)):
-		activity_history[l] = (1-beta) * activity_history[l] + beta * activities[l]
+  # Set stop gradients at first layer of weights
+  weights[0] = weights[0].at[5:,0].set(jax.lax.stop_gradient(0.))
 
-	energy_sum = 0
-	for l in range(len(activities)-1):
-		energy_sum += jnp.sum((1/2) * ((activities[l+1] - jnp.matmul(weights[l], relu(activities[l]))) / (jnp.abs(activity_history[l+1]) + C)) ** 2)
+  # Sum up energies over layers
+  energy_sum = 0
+  for l in range(len(activities)-1):
+    energy_sum += jnp.sum((1/2) * ((activities[l+1] - jnp.matmul(weights[l], relu(activities[l])))/C )**2)#/ (activity_history[l+1] + C)) ** 2)
+  return energy_sum
 
-	return energy_sum
+
+@jit
+def update_act_history(activities, activity_history, hps):
+  '''Update activity_history values
+  (1-beta) * previous_activity_history + beta * new_activity
+  Add relu so negative histories don't get incorporated
+  '''
+  beta = hps['beta']
+  for l in range(len(activity_history)):
+    activity_history[l] = (1-beta) * activity_history[l] + beta * relu(activities[l])
+  return activity_history
 
 
 @jit
@@ -88,8 +118,8 @@ def update_weights_energy(activities, weights, activity_history,  hps):
 ### Noise and clip functions ##########################################################################
 
 @jit
-def act_noise(activities, activity_history, key, hps):
-	''' Adds noise to each neuron based on its past activity.
+def act_noise(activities, key, hps):
+	''' Adds noise to each neuron.
 	'''
 
 	noise_scale = hps['noise_scale']
@@ -101,7 +131,7 @@ def act_noise(activities, activity_history, key, hps):
 		noise = random.normal(subkey, activities[l].shape) * noise_scale
 		new_activities[l] = activities[l] + noise
 
-	return new_activities, activity_history, key
+	return new_activities, key
 
 
 @jit
@@ -382,3 +412,104 @@ def move_rot(loc, motors, lever_rewards, orientation, imshp):
 def bandit(motors, rewards=[0.1, 0.01, 1.]):
 	lever_ind = jnp.argmax(motors)
 	return rewards[lever_ind], lever_ind
+
+
+### Jonah's functions ###
+def get_environment_state(t, timescale):
+
+	"""
+	This function returns an environmental state, either 0 or 1, that switches
+	according to the timescale specified.
+
+	TODO: edit function to allow for n states that can take values specified by an array
+
+	Arguments:
+	t: current time
+	timescale: time that passes between state switches
+	"""
+
+	# Start at 0, switch every timescale units of time
+	if (t // timescale) % 2 == 0:
+		return 0
+	else:
+		return 1
+
+
+def get_environment_stimuli(environment_state, reward0, reward1):
+
+	"""
+	This function takes in the current environment state and outputs the
+	associated bandit rewards, either reward0 for state=0 or reward1 for
+	state=1.
+
+	TODO: edit to allow for n rewards based on n states from edited
+		get_environment_state function
+	"""
+
+	# State 1 is associated with reward1
+	if environment_state:
+		return reward1
+	else:
+		return reward0
+
+
+## Define function to get rolling average over previous n timesteps
+def get_rolling_average(array, n):
+
+	# Define array to hold rolling average
+	rolling_avg = np.copy(array)
+
+	# Loop through array
+	for i in range(len(array)-n+1):
+
+		# Get average over up to n previous timesteps
+		window_size = min(i, n)
+		rolling_avg[i] = np.nanmean(array[i-window_size:i])
+
+	return rolling_avg
+
+
+## Define function to quantify reaction time
+def get_reaction_times(sensory_input, timesteps, timescale, n, pct):
+
+	"""
+	Rough quantification of reaction time of agent to changing environment.
+
+	Reaction time is defined as the number of timesteps from the change in environment
+	until the agent is getting the reward for n steps pct% of the time. If the agent
+	never switches to the other environment, the maximum time n is assigned.
+
+	Return an array the reaction time for each environment change. Note that these
+	will always be >=n, by definition.
+	"""
+
+	# Normalize rewards so that they are zero and one (fix for generality later)
+	sensory_input = (sensory_input - np.min(sensory_input)) / (np.max(sensory_input) - np.min(sensory_input))
+
+	# Define number of transitions
+	num_transitions = timesteps // timescale
+
+	# Separate levers for each segment of constant environment
+	sensory_input_per_env = np.array(sensory_input).reshape(int(len(sensory_input) / timescale), timescale)
+
+	# Initialize array to store reaction times
+	reaction_times = np.zeros(num_transitions)
+
+	# Loop through stationary environment phases
+	for env in range(num_transitions):
+
+		# Get rolling average of up to previous n timesteps for this environment phase
+		rolling_input_per_env = get_rolling_average(sensory_input_per_env[env], n=n)
+
+		# Get locations where the agent is has been getting the reward 90% of the time over n steps
+		reward_locs = np.argwhere(rolling_input_per_env[n:] > pct)
+
+		if len(reward_locs) != 0:
+			# Get first time this occurs
+			reaction_times[env] = np.min(reward_locs) + n
+		else:
+			# This never occurs, assign max time
+			reaction_times[env] = n
+
+	return reaction_times
+
